@@ -1,3 +1,11 @@
+> [!WARNING]
+> **This repository is deprecated.**
+>
+> - For [Turso Cloud](https://turso.tech), use [go-libsql](https://github.com/tursodatabase/go-libsql) which provides better performance and support for embedded replicas.
+> - For a Go driver for Turso Database, consider using [turso-go](https://github.com/tursodatabase/turso-go).
+
+---
+
 <p align="center">
   <a href="https://docs.turso.tech/sdk/go/quickstart">
     <img alt="Turso + Go cover" src="https://github.com/tursodatabase/libsql-client-go/assets/950181/d1bf85da-b906-4cbd-8b65-533b1307b4ff" width="1000">
