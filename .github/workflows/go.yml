@@ -43,7 +43,7 @@ jobs:
         run: go vet -v $(go list ./... | grep -v "github.com/tursodatabase/libsql-client-go/sqliteparser$")
 
       - name: Install sqlclosecheck
-        run: go install github.com/ryanrolds/sqlclosecheck@latest
+        run: go install github.com/ryanrolds/sqlclosecheck@v0.5.1
 
       - name: sqlclosecheck
         run: go vet -vettool=${HOME}/go/bin/sqlclosecheck ./...
