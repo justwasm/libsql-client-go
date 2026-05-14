@@ -164,6 +164,27 @@ func TestSplitStatement(t *testing.T) {
 			extraInfo: generateSimpleSplitStatementExtraInfo(sqliteparser.SQLiteLexerEND_),
 		},
 		{
+			name:      "CompleteCreateTriggerStatementWithCaseEndInBody",
+			value:     "CREATE TRIGGER my_trigger BEFORE INSERT ON my_table BEGIN SELECT CASE WHEN TRUE THEN FALSE END; END;",
+			stmts:     []string{"CREATE TRIGGER my_trigger BEFORE INSERT ON my_table BEGIN SELECT CASE WHEN TRUE THEN FALSE END; END"},
+			extraInfo: generateSimpleSplitStatementExtraInfo(sqliteparser.SQLiteLexerSCOL),
+		},
+		{
+			name:      "CompleteCreateTriggerStatementWithCaseEndInWhenClause",
+			value:     "CREATE TRIGGER my_trigger BEFORE INSERT ON my_table WHEN CASE WHEN NEW.id > 0 THEN 1 ELSE 0 END = 1 BEGIN SELECT 1; END",
+			stmts:     []string{"CREATE TRIGGER my_trigger BEFORE INSERT ON my_table WHEN CASE WHEN NEW.id > 0 THEN 1 ELSE 0 END = 1 BEGIN SELECT 1; END"},
+			extraInfo: generateSimpleSplitStatementExtraInfo(sqliteparser.SQLiteLexerEND_),
+		},
+		{
+			name:  "CreateTriggerWithCaseEndInWhenClauseFollowedByStatement",
+			value: "CREATE TRIGGER my_trigger BEFORE INSERT ON my_table WHEN CASE WHEN NEW.id > 0 THEN 1 ELSE 0 END = 1 BEGIN SELECT 1; END; SELECT 2;",
+			stmts: []string{
+				"CREATE TRIGGER my_trigger BEFORE INSERT ON my_table WHEN CASE WHEN NEW.id > 0 THEN 1 ELSE 0 END = 1 BEGIN SELECT 1; END",
+				"SELECT 2",
+			},
+			extraInfo: generateSimpleSplitStatementExtraInfo(sqliteparser.SQLiteLexerSCOL),
+		},
+		{
 			name:      "IncompleteCreateTriggerStatement",
 			value:     "CREATE TRIGGER update_updated_at AFTER UPDATE ON users FOR EACH ROW BEGIN UPDATE users SET updated_at = 0 WHERE id = NEW.id;",
 			stmts:     []string{"CREATE TRIGGER update_updated_at AFTER UPDATE ON users FOR EACH ROW BEGIN UPDATE users SET updated_at = 0 WHERE id = NEW.id;"},

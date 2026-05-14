@@ -27,6 +27,8 @@ func (iterator *StatementIterator) Next() (statement string, extraInfo SplitStat
 	var (
 		insideCreateTriggerStmt = false
 		insideMultilineComment  = false
+		sawTriggerBegin         = false
+		triggerBlockDepth       = 0
 		startPosition           = -1
 		previousToken           = iterator.currentToken
 	)
@@ -47,9 +49,22 @@ func (iterator *StatementIterator) Next() (statement string, extraInfo SplitStat
 			insideCreateTriggerStmt = atCreateTriggerStart(iterator.tokenizer)
 			startPosition = iterator.currentToken.GetStart()
 		} else if insideCreateTriggerStmt {
-			// extend trigger creation statement to include END token after last semicolon
-			if iterator.currentToken.GetTokenType() == sqliteparser.SQLiteLexerEND_ {
-				insideCreateTriggerStmt = false
+			tokenType := iterator.currentToken.GetTokenType()
+			if !sawTriggerBegin {
+				if tokenType == sqliteparser.SQLiteLexerBEGIN_ {
+					sawTriggerBegin = true
+					triggerBlockDepth = 1
+				}
+			} else {
+				switch tokenType {
+				case sqliteparser.SQLiteLexerCASE_:
+					triggerBlockDepth++
+				case sqliteparser.SQLiteLexerEND_:
+					triggerBlockDepth--
+					if triggerBlockDepth == 0 {
+						insideCreateTriggerStmt = false
+					}
+				}
 			}
 		} else if iterator.currentToken.GetTokenType() == sqliteparser.SQLiteLexerSCOL {
 			// finish current statement (don't forget to consume as we are breaking here)
