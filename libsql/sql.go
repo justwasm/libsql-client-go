@@ -19,6 +19,7 @@ type config struct {
 	proxy               *string
 	schemaDb            *bool
 	remoteEncryptionKey *string
+	requestHeaders      map[string]string
 }
 
 type Option interface {
@@ -86,6 +87,26 @@ func WithRemoteEncryptionKey(key string) Option {
 			return fmt.Errorf("remoteEncryptionKey must not be empty")
 		}
 		o.remoteEncryptionKey = &key
+		return nil
+	})
+}
+
+// WithRequestHeaders attaches arbitrary HTTP headers to every request the
+// driver sends to the remote server. Passing the `Host` key (case-insensitive)
+// has no effect.
+func WithRequestHeaders(headers map[string]string) Option {
+	return option(func(o *config) error {
+		if o.requestHeaders != nil {
+			return fmt.Errorf("requestHeaders already set")
+		}
+		if len(headers) == 0 {
+			return fmt.Errorf("requestHeaders must not be empty")
+		}
+		copied := make(map[string]string, len(headers))
+		for k, v := range headers {
+			copied[k] = v
+		}
+		o.requestHeaders = copied
 		return nil
 	})
 }
@@ -182,7 +203,7 @@ func (c config) connector(dbPath string) (driver.Connector, error) {
 		return wsConnector{url: u.String(), authToken: authToken}, nil
 	}
 	if u.Scheme == "https" || u.Scheme == "http" {
-		return httpConnector{url: u.String(), authToken: authToken, host: host, schemaDb: schemaDb, remoteEncryptionKey: encryptionKey}, nil
+		return httpConnector{url: u.String(), authToken: authToken, host: host, schemaDb: schemaDb, remoteEncryptionKey: encryptionKey, requestHeaders: c.requestHeaders}, nil
 	}
 
 	return nil, fmt.Errorf("unsupported URL scheme: %s\nThis driver supports only URLs that start with libsql://, file://, https://, http://, wss:// and ws://", u.Scheme)
@@ -208,10 +229,11 @@ type httpConnector struct {
 	host                string
 	schemaDb            bool
 	remoteEncryptionKey string
+	requestHeaders      map[string]string
 }
 
 func (c httpConnector) Connect(_ctx context.Context) (driver.Conn, error) {
-	return http.Connect(c.url, c.authToken, c.host, c.schemaDb, c.remoteEncryptionKey), nil
+	return http.Connect(c.url, c.authToken, c.host, c.schemaDb, c.remoteEncryptionKey, c.requestHeaders), nil
 }
 
 func (c httpConnector) Driver() driver.Driver {
@@ -360,7 +382,7 @@ func (d Driver) Open(dbUrl string) (driver.Conn, error) {
 		return ws.Connect(u.String(), jwt)
 	}
 	if u.Scheme == "https" || u.Scheme == "http" {
-		return http.Connect(u.String(), jwt, u.Host, false, ""), nil
+		return http.Connect(u.String(), jwt, u.Host, false, "", nil), nil
 	}
 
 	return nil, fmt.Errorf("unsupported URL scheme: %s\nThis driver supports only URLs that start with libsql://, file://, https://, http://, wss:// and ws://", u.Scheme)
