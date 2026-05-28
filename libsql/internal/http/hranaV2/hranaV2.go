@@ -37,8 +37,8 @@ func init() {
 	commitHash = "unknown"
 }
 
-func Connect(url, jwt, host string, schemaDb bool, encryptionKey string) driver.Conn {
-	return &hranaV2Conn{url, jwt, host, schemaDb, encryptionKey, "", false, 0}
+func Connect(url, jwt, host string, schemaDb bool, encryptionKey string, requestHeaders map[string]string) driver.Conn {
+	return &hranaV2Conn{url, jwt, host, schemaDb, encryptionKey, requestHeaders, "", false, 0}
 }
 
 type hranaV2Stmt struct {
@@ -88,6 +88,7 @@ type hranaV2Conn struct {
 	host                string
 	schemaDb            bool
 	remoteEncryptionKey string
+	requestHeaders      map[string]string
 	baton               string
 	streamClosed        bool
 	replicationIndex    uint64
@@ -123,11 +124,11 @@ func (h *hranaV2Conn) PrepareContext(ctx context.Context, query string) (driver.
 
 func (h *hranaV2Conn) Close() error {
 	if h.baton != "" {
-		go func(baton, url, jwt, host, encryptionKey string) {
+		go func(baton, url, jwt, host, encryptionKey string, requestHeaders map[string]string) {
 			msg := hrana.PipelineRequest{Baton: baton}
 			msg.Add(hrana.CloseStream())
-			_, _, _ = sendPipelineRequest(context.Background(), &msg, url, jwt, host, encryptionKey)
-		}(h.baton, h.url, h.jwt, h.host, h.remoteEncryptionKey)
+			_, _, _ = sendPipelineRequest(context.Background(), &msg, url, jwt, host, encryptionKey, requestHeaders)
+		}(h.baton, h.url, h.jwt, h.host, h.remoteEncryptionKey, h.requestHeaders)
 	}
 	return nil
 }
@@ -175,7 +176,7 @@ func (h *hranaV2Conn) sendPipelineRequest(ctx context.Context, msg *hrana.Pipeli
 	if h.replicationIndex > 0 {
 		addReplicationIndex(msg, h.replicationIndex)
 	}
-	result, streamClosed, err := sendPipelineRequest(ctx, msg, h.url, h.jwt, h.host, h.remoteEncryptionKey)
+	result, streamClosed, err := sendPipelineRequest(ctx, msg, h.url, h.jwt, h.host, h.remoteEncryptionKey, h.requestHeaders)
 	if streamClosed {
 		h.streamClosed = true
 	}
@@ -232,7 +233,7 @@ func getReplicationIndex(response *hrana.PipelineResponse) uint64 {
 	return replicationIndex
 }
 
-func sendPipelineRequest(ctx context.Context, msg *hrana.PipelineRequest, url string, jwt string, host string, remoteEncryptionKey string) (result hrana.PipelineResponse, streamClosed bool, err error) {
+func sendPipelineRequest(ctx context.Context, msg *hrana.PipelineRequest, url string, jwt string, host string, remoteEncryptionKey string, requestHeaders map[string]string) (result hrana.PipelineResponse, streamClosed bool, err error) {
 	reqBody, err := json.Marshal(msg)
 	if err != nil {
 		return hrana.PipelineResponse{}, false, err
@@ -254,6 +255,9 @@ func sendPipelineRequest(ctx context.Context, msg *hrana.PipelineRequest, url st
 	}
 
 	req.Host = host
+	for name, value := range requestHeaders {
+		req.Header.Set(name, value)
+	}
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return hrana.PipelineResponse{}, false, err
@@ -597,11 +601,11 @@ func (h *hranaV2Conn) QueryContext(ctx context.Context, query string, args []dri
 
 func (h *hranaV2Conn) closeStream() {
 	if h.baton != "" {
-		go func(baton, url, jwt, host, encryptionKey string) {
+		go func(baton, url, jwt, host, encryptionKey string, requestHeaders map[string]string) {
 			msg := hrana.PipelineRequest{Baton: baton}
 			msg.Add(hrana.CloseStream())
-			_, _, _ = sendPipelineRequest(context.Background(), &msg, url, jwt, host, encryptionKey)
-		}(h.baton, h.url, h.jwt, h.host, h.remoteEncryptionKey)
+			_, _, _ = sendPipelineRequest(context.Background(), &msg, url, jwt, host, encryptionKey, requestHeaders)
+		}(h.baton, h.url, h.jwt, h.host, h.remoteEncryptionKey, h.requestHeaders)
 		h.baton = ""
 	}
 }
