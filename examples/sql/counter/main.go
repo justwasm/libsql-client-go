@@ -3,13 +3,14 @@ package main
 import (
 	"context"
 	"database/sql"
+	"database/sql/driver"
 	"fmt"
 	"log"
 	"os"
 	"sync"
 
-	_ "github.com/tursodatabase/libsql-client-go/libsql"
-	_ "modernc.org/sqlite"
+	"github.com/tursodatabase/libsql-client-go/libsql"
+	_ "github.com/ncruces/go-sqlite3/driver"
 )
 
 func pingContext(ctx context.Context, db *sql.DB) {
@@ -65,12 +66,8 @@ func queryTx(ctx context.Context, tx *sql.Tx, stmt string, args ...any) *sql.Row
 	return res
 }
 
-func runCounterExample(dbPath string) {
-	db, err := sql.Open("libsql", dbPath)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "failed to open db %s: %s", dbPath, err)
-		os.Exit(1)
-	}
+func runCounterExample(dbPath string, authToken string) {
+	db := openDB(dbPath, authToken)
 	ctx := context.Background()
 
 	pingContext(ctx, db)
@@ -206,12 +203,8 @@ func runCounterExample(dbPath string) {
 	}
 }
 
-func runConcurrentExample(dbPath string) {
-	db, err := sql.Open("libsql", dbPath)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "failed to open db %s: %s", dbPath, err)
-		os.Exit(1)
-	}
+func runConcurrentExample(dbPath string, authToken string) {
+	db := openDB(dbPath, authToken)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	exec(ctx, db, "DROP TABLE IF EXISTS table1")
@@ -266,12 +259,8 @@ func runConcurrentExample(dbPath string) {
 	wg.Wait()
 }
 
-func runConcurrentOnOneConnectionExample(dbPath string) {
-	db, err := sql.Open("libsql", dbPath)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "failed to open db %s: %s", dbPath, err)
-		os.Exit(1)
-	}
+func runConcurrentOnOneConnectionExample(dbPath string, authToken string) {
+	db := openDB(dbPath, authToken)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	exec(ctx, db, "DROP TABLE IF EXISTS table1")
@@ -332,14 +321,35 @@ func runConcurrentOnOneConnectionExample(dbPath string) {
 	wg.Wait()
 }
 
-var dbUrl = "http://127.0.0.1:8080"
 var dbFile = "file:test.db"
 
+func openDB(dbPath string, authToken string) *sql.DB {
+	var connector driver.Connector
+	var err error
+	if authToken == "" {
+		connector, err = libsql.NewConnector(dbPath)
+	} else {
+		connector, err = libsql.NewConnector(dbPath, libsql.WithAuthToken(authToken))
+	}
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "failed to create connector for %s: %s", dbPath, err)
+		os.Exit(1)
+	}
+	return sql.OpenDB(connector)
+}
+
 func main() {
-	runCounterExample(dbUrl)
-	runCounterExample(dbFile)
-	runConcurrentExample(dbUrl)
-	runConcurrentExample(dbFile)
-	runConcurrentOnOneConnectionExample(dbUrl)
-	runConcurrentOnOneConnectionExample(dbFile)
+	// Use TURSO_DATABASE_URL and TURSO_AUTH_TOKEN env vars to connect to a remote Turso database.
+	// When unset, the example uses a local SQLite file for all tests.
+	tursoUrl := os.Getenv("TURSO_DATABASE_URL")
+	tursoToken := os.Getenv("TURSO_AUTH_TOKEN")
+
+	if tursoUrl != "" {
+		runCounterExample(tursoUrl, tursoToken)
+	} else {
+		runCounterExample(dbFile, "")
+		runConcurrentExample(dbFile, "")
+		runConcurrentOnOneConnectionExample(dbFile, "")
+	}
+	fmt.Println("All examples completed successfully!")
 }
