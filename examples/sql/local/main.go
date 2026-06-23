@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"database/sql"
-	"database/sql/driver"
 	"fmt"
 	"os"
 
@@ -12,14 +11,13 @@ import (
 )
 
 func main() {
-	// sqld with --enable-namespaces identifies the namespace via the Host header.
+	// URL format:
+	//   Default ns:  http://127.0.0.1:8080
+	//   Named ns:    http://127.0.0.1:9090/<namespace>
 	//
-	//   Default ns:    http://127.0.0.1:8080
-	//   Named ns:      http://<ns>.127.0.0.1:8080  (via WithProxy)
-	//
-	// Note: Because Go's HTTP client needs to resolve the hostname, we use
-	// WithProxy to keep TCP going to 127.0.0.1:8080 while the Host header
-	// carries "<ns>.127.0.0.1:8080" for sqld to route on.
+	// When a namespace is provided, it's encoded as a path prefix.
+	// The library constructs the pipeline URL as {base}/v2/pipeline,
+	// so "http://127.0.0.1:9090/foo" becomes "http://127.0.0.1:9090/foo/v2/pipeline".
 	sqldURL := "http://127.0.0.1:8080"
 	namespace := ""
 
@@ -30,20 +28,11 @@ func main() {
 		namespace = os.Args[2]
 	}
 
-	var connector driver.Connector
-	var err error
-
 	if namespace != "" {
-		// Encode the namespace as a subdomain in the URL so the library
-		// sends it as the Host header. WithProxy keeps TCP pointing at
-		// 127.0.0.1 so DNS resolution works.
-		connector, err = libsql.NewConnector(
-			fmt.Sprintf("http://%s.127.0.0.1:8080", namespace),
-			libsql.WithProxy(sqldURL),
-		)
-	} else {
-		connector, err = libsql.NewConnector(sqldURL)
+		sqldURL = sqldURL + "/" + namespace
 	}
+
+	connector, err := libsql.NewConnector(sqldURL)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "connector: %s\n", err)
 		os.Exit(1)

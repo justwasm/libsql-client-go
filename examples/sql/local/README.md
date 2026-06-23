@@ -12,20 +12,9 @@ go run .
 go run . http://127.0.0.1:9090 my-namespace
 ```
 
-## How namespace routing works
-
-When `--enable-namespaces` is active, sqld identifies the namespace from the `Host` header subdomain.
-
-This example uses `WithProxy` to decouple the TCP destination from the Host header:
-
-```go
-connector, _ := libsql.NewConnector(
-    fmt.Sprintf("http://%s.127.0.0.1:8080", namespace),  // Host header
-    libsql.WithProxy(sqldURL),                           // TCP destination
-)
-```
-
-Passing just `http://127.0.0.1:8080` with no namespace arg connects without namespace routing.
+The namespace is encoded as a path prefix.  The library constructs
+`{url}/v2/pipeline`, so `http://127.0.0.1:9090/my-namespace` becomes
+`http://127.0.0.1:9090/my-namespace/v2/pipeline`.
 
 ## Requirements
 

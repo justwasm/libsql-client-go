@@ -21,8 +21,6 @@ func main() {
 	sqldDB := env("SQLD_DB_PATH", "data.sqld")
 	listen := env("LISTEN", ":9090")
 
-	// Start sqld as a subprocess.  If the gateway dies (even SIGKILL),
-	// the child sqld dies with it.
 	cmd := exec.Command("sqld",
 		"--enable-namespaces",
 		"--db-path", sqldDB,
@@ -36,7 +34,6 @@ func main() {
 		log.Fatalf("start sqld: %s", err)
 	}
 
-	// Kill sqld on exit.
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
 	go func() {
@@ -45,8 +42,6 @@ func main() {
 		cmd.Wait()
 		os.Exit(0)
 	}()
-
-	// Kill sqld when the gateway is killed with SIGKILL too.
 	go func() {
 		cmd.Wait()
 		os.Exit(0)
@@ -83,9 +78,11 @@ type gateway struct {
 }
 
 func (g *gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	ns := extractNamespace(r.Host)
+	// Extract the namespace from the first path segment.
+	// Client sends e.g. /foo/v2/pipeline → ns=foo, strip /foo.
+	ns, rest := extractNamespacePath(r.URL.Path)
 	if ns == "" {
-		http.Error(w, "missing namespace in Host header", http.StatusBadRequest)
+		http.Error(w, "missing namespace in path: /<ns>/v2/pipeline", http.StatusBadRequest)
 		return
 	}
 
@@ -95,14 +92,16 @@ func (g *gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Proxy to sqld, preserving the original Host header so sqld
-	// can extract the namespace from the subdomain.
+	// Proxy to sqld with the namespace encoded in the Host header
+	// (sqld's native mechanism) and the namespace segment stripped
+	// from the path.
 	target, _ := url.Parse(g.sqldURL)
-	originalHost := r.Host
 	r.URL.Host = target.Host
 	r.URL.Scheme = target.Scheme
+	r.URL.Path = rest
+	r.URL.RawPath = rest
 	r.RequestURI = ""
-	r.Host = originalHost
+	r.Host = fmt.Sprintf("%s.%s", ns, target.Host)
 
 	resp, err := g.proxyHTTP.Do(r)
 	if err != nil {
@@ -119,6 +118,17 @@ func (g *gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	w.WriteHeader(resp.StatusCode)
 	io.Copy(w, resp.Body)
+}
+
+// extractNamespacePath splits "/ns/v2/pipeline" → ("ns", "/v2/pipeline").
+// Returns ("", path) if no namespace segment is found.
+func extractNamespacePath(path string) (string, string) {
+	path = strings.TrimPrefix(path, "/")
+	idx := strings.IndexByte(path, '/')
+	if idx <= 0 {
+		return "", path
+	}
+	return path[:idx], "/" + path[idx+1:]
 }
 
 func (g *gateway) ensureNamespace(ns string) error {
@@ -150,14 +160,4 @@ func (g *gateway) ensureNamespace(ns string) error {
 	g.created[ns] = true
 	g.mu.Unlock()
 	return nil
-}
-
-func extractNamespace(host string) string {
-	host = strings.Split(host, ":")[0]
-	if idx := strings.IndexByte(host, '.'); idx > 0 {
-		if host[idx+1:] != "" {
-			return host[:idx]
-		}
-	}
-	return ""
 }
