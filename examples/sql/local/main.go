@@ -7,8 +7,22 @@ import (
 	"os"
 
 	"github.com/tursodatabase/libsql-client-go/libsql"
-	_ "github.com/ncruces/go-sqlite3/driver"
 )
+
+func openDB(url string, pragmas map[string]string) (*sql.DB, error) {
+	connector, err := libsql.NewConnector(url)
+	if err != nil {
+		return nil, fmt.Errorf("connector: %w", err)
+	}
+	db := sql.OpenDB(connector)
+	for name, value := range pragmas {
+		if _, err := db.Exec(fmt.Sprintf("PRAGMA %s = %s;", name, value)); err != nil {
+			db.Close()
+			return nil, fmt.Errorf("pragma %q: %w", name, err)
+		}
+	}
+	return db, nil
+}
 
 func main() {
 	// URL format:
@@ -32,12 +46,11 @@ func main() {
 		sqldURL = sqldURL + "/" + namespace
 	}
 
-	connector, err := libsql.NewConnector(sqldURL)
+	db, err := openDB(sqldURL, nil)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "connector: %s\n", err)
+		fmt.Fprintf(os.Stderr, "%s\n", err)
 		os.Exit(1)
 	}
-	db := sql.OpenDB(connector)
 	defer db.Close()
 
 	ctx := context.Background()

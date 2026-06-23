@@ -3,9 +3,9 @@ package main
 import (
 	"bytes"
 	"fmt"
-	"io"
 	"log"
 	"net/http"
+	"net/http/httputil"
 	"net/url"
 	"os"
 	"os/exec"
@@ -47,17 +47,26 @@ func main() {
 		os.Exit(0)
 	}()
 
+	target, err := url.Parse("http://" + sqldHTTP)
+	if err != nil {
+		log.Fatalf("parse sqld url: %s", err)
+	}
+
 	gw := &gateway{
-		sqldURL:   "http://" + sqldHTTP,
-		adminURL:  "http://" + sqldAdmin,
-		created:   map[string]bool{},
-		adminHTTP: &http.Client{},
-		proxyHTTP: &http.Client{},
+		adminURL: "http://" + sqldAdmin,
+		created:  map[string]bool{},
+		proxy: &httputil.ReverseProxy{
+			Rewrite: func(r *httputil.ProxyRequest) {
+				ns, rest := extractNamespacePath(r.In.URL.Path)
+				r.SetURL(target)
+				r.Out.URL.Path = rest
+				r.Out.Host = fmt.Sprintf("%s.%s", ns, target.Host)
+			},
+		},
 	}
 
 	log.Printf("gateway listening on %s", listen)
-	log.Printf("sqld:  %s", gw.sqldURL)
-	log.Printf("admin: %s", gw.adminURL)
+	log.Printf("sqld:  %s", gw.adminURL)
 	log.Fatal(http.ListenAndServe(listen, gw))
 }
 
@@ -69,18 +78,14 @@ func env(key, def string) string {
 }
 
 type gateway struct {
-	sqldURL   string
-	adminURL  string
-	created   map[string]bool
-	mu        sync.Mutex
-	adminHTTP *http.Client
-	proxyHTTP *http.Client
+	adminURL string
+	created  map[string]bool
+	mu       sync.Mutex
+	proxy    *httputil.ReverseProxy
 }
 
 func (g *gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	// Extract the namespace from the first path segment.
-	// Client sends e.g. /foo/v2/pipeline → ns=foo, strip /foo.
-	ns, rest := extractNamespacePath(r.URL.Path)
+	ns, _ := extractNamespacePath(r.URL.Path)
 	if ns == "" {
 		http.Error(w, "missing namespace in path: /<ns>/v2/pipeline", http.StatusBadRequest)
 		return
@@ -92,32 +97,7 @@ func (g *gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Proxy to sqld with the namespace encoded in the Host header
-	// (sqld's native mechanism) and the namespace segment stripped
-	// from the path.
-	target, _ := url.Parse(g.sqldURL)
-	r.URL.Host = target.Host
-	r.URL.Scheme = target.Scheme
-	r.URL.Path = rest
-	r.URL.RawPath = rest
-	r.RequestURI = ""
-	r.Host = fmt.Sprintf("%s.%s", ns, target.Host)
-
-	resp, err := g.proxyHTTP.Do(r)
-	if err != nil {
-		log.Printf("ERROR proxy: %s", err)
-		http.Error(w, err.Error(), http.StatusBadGateway)
-		return
-	}
-	defer resp.Body.Close()
-
-	for k, vv := range resp.Header {
-		for _, v := range vv {
-			w.Header().Add(k, v)
-		}
-	}
-	w.WriteHeader(resp.StatusCode)
-	io.Copy(w, resp.Body)
+	g.proxy.ServeHTTP(w, r)
 }
 
 // extractNamespacePath splits "/ns/v2/pipeline" → ("ns", "/v2/pipeline").
@@ -125,7 +105,10 @@ func (g *gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 func extractNamespacePath(path string) (string, string) {
 	path = strings.TrimPrefix(path, "/")
 	idx := strings.IndexByte(path, '/')
-	if idx <= 0 {
+	if idx < 0 {
+		return path, "/"
+	}
+	if idx == 0 {
 		return "", path
 	}
 	return path[:idx], "/" + path[idx+1:]
@@ -146,7 +129,7 @@ func (g *gateway) ensureNamespace(ns string) error {
 		return err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	resp, err := g.adminHTTP.Do(req)
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return fmt.Errorf("admin call failed: %w", err)
 	}
